@@ -18,12 +18,9 @@ import (
 	"unsafe"
 )
 
-const (
-	djiUSBVendorID  = 0x2ca3
-	djiUSBProductID = 0x4006
-)
-
 type usbAT struct {
+	vendorID    uint16
+	productID   uint16
 	ctx         *C.libusb_context
 	handle      *C.libusb_device_handle
 	iface       int
@@ -38,15 +35,23 @@ type usbATCandidate struct {
 	endpointOut byte
 }
 
-func openDJIUSBAT() (*usbAT, error) {
+func openUSBAT() (*usbAT, error) {
 	var ctx *C.libusb_context
 	if rc := C.libusb_init(&ctx); rc != 0 {
 		return nil, fmt.Errorf("libusb init: %s", usbErrorName(rc))
 	}
-	handle := C.libusb_open_device_with_vid_pid(ctx, djiUSBVendorID, djiUSBProductID)
+	var handle *C.libusb_device_handle
+	var vendorID, productID uint16
+	for _, device := range supportedUSBModems {
+		handle = C.libusb_open_device_with_vid_pid(ctx, C.uint16_t(device.vendorID), C.uint16_t(device.productID))
+		if handle != nil {
+			vendorID, productID = device.vendorID, device.productID
+			break
+		}
+	}
 	if handle == nil {
 		C.libusb_exit(ctx)
-		return nil, errors.New("DJI USB AT device 2ca3:4006 not found")
+		return nil, errors.New("supported USB AT device not found or could not be opened")
 	}
 	candidates, err := usbATCandidates(handle)
 	if err != nil {
@@ -61,6 +66,8 @@ func openDJIUSBAT() (*usbAT, error) {
 			continue
 		}
 		dev := &usbAT{
+			vendorID:    vendorID,
+			productID:   productID,
 			ctx:         ctx,
 			handle:      handle,
 			iface:       candidate.iface,
@@ -83,7 +90,7 @@ func openDJIUSBAT() (*usbAT, error) {
 	if lastErr != nil {
 		return nil, lastErr
 	}
-	return nil, errors.New("no USB bulk interface candidates found for DJI AT bridge")
+	return nil, errors.New("no USB bulk interface candidates found for AT bridge")
 }
 
 func usbATCandidates(handle *C.libusb_device_handle) ([]usbATCandidate, error) {
@@ -295,8 +302,8 @@ func (u *usbAT) Description() string {
 	if u == nil {
 		return "USB AT"
 	}
-	return fmt.Sprintf("USB AT · 2ca3:4006 interface %d out 0x%02x in 0x%02x",
-		u.iface, u.endpointOut, u.endpointIn)
+	return fmt.Sprintf("USB AT · %04x:%04x interface %d out 0x%02x in 0x%02x",
+		u.vendorID, u.productID, u.iface, u.endpointOut, u.endpointIn)
 }
 
 func (u *usbAT) bulkWriteLocked(endpoint byte, payload []byte, timeout time.Duration) error {

@@ -11,6 +11,7 @@ EG25-G. It does not require UTM for AT-mode management.
 - Execute explicit AT commands
 - Read and switch physical eUICC profiles through AT APDU transport
 - Local management page at `http://127.0.0.1:7575`
+- Direct USB AT support for DJI `2ca3:4006` and BAIWANG EG25G-QDC507 `2c7c:0125`
 - Packaged Apple Silicon release (Intel packaging is planned separately)
 
 The cellular data interface remains managed by macOS. This allows macOS to use

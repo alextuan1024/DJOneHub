@@ -9,7 +9,7 @@ import (
 
 type usbAT struct{}
 
-func openDJIUSBAT() (*usbAT, error) {
+func openUSBAT() (*usbAT, error) {
 	return nil, errors.New("USB AT requires macOS cgo build with libusb")
 }
 

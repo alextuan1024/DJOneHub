@@ -1,6 +1,49 @@
 package main
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
+
+func TestParseUSBModem(t *testing.T) {
+	for _, tt := range []struct {
+		name                string
+		vendorID, productID int
+		want                bool
+	}{
+		{"DJI", 0x2ca3, 0x4006, true},
+		{"BAIWANG", 0x2c7c, 0x0125, true},
+		{"other DJI product", 0x2ca3, 0x0001, false},
+		{"other Quectel product", 0x2c7c, 0x0001, false},
+		{"unrelated vendor", 0x05ac, 0x0125, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			inventory := fmt.Sprintf(`
+"idVendor" = %d
+"idProduct" = %d
+"USB Vendor Name" = "%s"
+"USB Product Name" = "EG25G-QDC507"
+"locationID" = 17825792
+"bInterfaceNumber" = 2
+"bInterfaceClass" = 255
+"bNumEndpoints" = 3
+`, tt.vendorID, tt.productID, tt.name)
+			device := parseUSBModem(inventory)
+			if !tt.want {
+				if device != nil {
+					t.Fatalf("unsupported device discovered: %+v", device)
+				}
+				return
+			}
+			if device == nil || device.Vendor != tt.name || device.VendorID != fmt.Sprintf("%04x", tt.vendorID) || device.ProductID != fmt.Sprintf("%04x", tt.productID) {
+				t.Fatalf("incorrect USB identity: %+v", device)
+			}
+			if len(device.Interfaces) != 1 || device.Interfaces[0].Number != 2 || device.Interfaces[0].Endpoints != 3 {
+				t.Fatalf("incorrect USB interfaces: %+v", device.Interfaces)
+			}
+		})
+	}
+}
 
 func TestPortScore(t *testing.T) {
 	tests := []struct {

@@ -200,8 +200,8 @@ func main() {
 		var err error
 		port, err = discoverATPort()
 		if err != nil {
-			usbDevice := discoverDJIUSBDevice()
-			usbATDevice, usbATErr := openDJIUSBAT()
+			usbDevice := discoverUSBModem()
+			usbATDevice, usbATErr := openUSBAT()
 			instance := &app{
 				port:             "未发现 AT 串口",
 				discoveryError:   err.Error(),
@@ -212,7 +212,7 @@ func main() {
 				smsReassembler:   smscodec.NewReassembler(),
 			}
 			if usbDevice != nil {
-				log.Printf("DJI USB device detected without AT serial port: %s %s (%s:%s)",
+				log.Printf("USB modem detected without AT serial port: %s %s (%s:%s)",
 					usbDevice.Vendor, usbDevice.Product, usbDevice.VendorID, usbDevice.ProductID)
 			}
 			if usbATErr != nil {
@@ -221,7 +221,7 @@ func main() {
 				instance.port = usbATDevice.Description()
 				instance.discoveryError = ""
 				defer usbATDevice.Close()
-				log.Printf("USB AT bridge opened on DJI %s", usbATDevice.Description())
+				log.Printf("USB AT bridge opened on %s", usbATDevice.Description())
 				instance.initUSBATESIMManager()
 			}
 			log.Printf("modem discovery skipped: %v", err)
@@ -417,17 +417,43 @@ func portScore(port string) int {
 	return 0
 }
 
-func discoverDJIUSBDevice() *usbDeviceStatus {
+var supportedUSBModems = []struct {
+	vendorID  uint16
+	productID uint16
+}{
+	{0x2ca3, 0x4006}, // DJI first-generation dongle.
+	{0x2c7c, 0x0125}, // BAIWANG EG25G-QDC507.
+}
+
+func isSupportedUSBModem(vendorID, productID int) bool {
+	for _, device := range supportedUSBModems {
+		if vendorID == int(device.vendorID) && productID == int(device.productID) {
+			return true
+		}
+	}
+	return false
+}
+
+func discoverUSBModem() *usbDeviceStatus {
 	out, err := exec.Command("ioreg", "-r", "-c", "IOUSBHostInterface", "-l", "-w", "0").Output()
 	if err != nil {
 		return nil
 	}
 
+	return parseUSBModem(string(out))
+}
+
+func parseUSBModem(inventory string) *usbDeviceStatus {
 	var device *usbDeviceStatus
-	for _, block := range strings.Split(string(out), "\n\n") {
+	for _, block := range strings.Split(inventory, "\n\n") {
 		vendorID, okVendor := intProperty(block, "idVendor")
 		productID, okProduct := intProperty(block, "idProduct")
-		if !okVendor || !okProduct || vendorID != 0x2ca3 {
+		if !okVendor || !okProduct || !isSupportedUSBModem(vendorID, productID) {
+			continue
+		}
+		if device != nil && (device.VendorID != fmt.Sprintf("%04x", vendorID) ||
+			device.ProductID != fmt.Sprintf("%04x", productID) ||
+			device.LocationID != formatHexProperty(block, "locationID")) {
 			continue
 		}
 		if device == nil {
@@ -441,10 +467,10 @@ func discoverDJIUSBDevice() *usbDeviceStatus {
 				Mode:       "vendor-specific USB mode",
 			}
 			if strings.TrimSpace(device.Product) == "" {
-				device.Product = "DJI 4G Module"
+				device.Product = "USB 4G Module"
 			}
 			if strings.TrimSpace(device.Vendor) == "" {
-				device.Vendor = "DJI"
+				device.Vendor = device.VendorID
 			}
 		}
 		ifaceNumber, okIface := intProperty(block, "bInterfaceNumber")
@@ -638,9 +664,9 @@ func (a *app) ensureUSBAT() error {
 		return nil
 	}
 	if a.currentUSBDevice() == nil {
-		a.port = "未检测到 DJI USB 设备"
-		a.discoveryError = "DJI USB device is not connected"
-		return errors.New("DJI USB device is not connected")
+		a.port = "未检测到支持的 USB 模块"
+		a.discoveryError = "supported USB modem is not connected"
+		return errors.New("supported USB modem is not connected")
 	}
 	if !a.usbATBackoffUntil.IsZero() && time.Now().Before(a.usbATBackoffUntil) {
 		if a.usbATBackoffErr != "" {
@@ -648,7 +674,7 @@ func (a *app) ensureUSBAT() error {
 		}
 		return errors.New("USB AT is cooling down after disconnect")
 	}
-	dev, err := openDJIUSBAT()
+	dev, err := openUSBAT()
 	if err != nil {
 		return err
 	}
@@ -657,7 +683,7 @@ func (a *app) ensureUSBAT() error {
 	a.usbATBackoffErr = ""
 	a.port = dev.Description()
 	a.discoveryError = ""
-	log.Printf("USB AT bridge opened on DJI %s", dev.Description())
+	log.Printf("USB AT bridge opened on %s", dev.Description())
 	// The first open may fail while USB is re-enumerating. When a later poll
 	// succeeds, rebuild the eSIM service that startup could not create.
 	a.initUSBATESIMManager()
@@ -686,8 +712,8 @@ func (a *app) markUSBATDetached(reason string) {
 		a.usbAT = nil
 	}
 	a.usbDevice = nil
-	a.port = "未检测到 DJI USB 设备"
-	a.discoveryError = "DJI USB device is not connected"
+	a.port = "未检测到支持的 USB 模块"
+	a.discoveryError = "supported USB modem is not connected"
 	a.usbATBackoffUntil = time.Now().Add(2 * time.Second)
 	a.usbATBackoffErr = reason
 	if manager, _ := a.currentESIMManager(); manager != nil {
@@ -770,7 +796,7 @@ func (a *app) status(w http.ResponseWriter, _ *http.Request) {
 		// A libusb handle may survive a physical unplug. Refresh the macOS USB
 		// inventory before using it so the UI never reports a stale connection.
 		if a.usbAT != nil && a.currentUSBDevice() == nil {
-			a.markUSBATDetached("DJI USB device disconnected")
+			a.markUSBATDetached("USB modem disconnected")
 		}
 		if err := a.ensureUSBAT(); err != nil {
 			log.Printf("USB AT retry failed: %v", err)
@@ -811,7 +837,7 @@ func (a *app) currentUSBDevice() *usbDeviceStatus {
 	if a.modem != nil || a.demo {
 		return a.usbDevice
 	}
-	usbDevice := discoverDJIUSBDevice()
+	usbDevice := discoverUSBModem()
 	// Never retain the last successful scan: that is stale after an unplug.
 	a.usbDevice = usbDevice
 	return usbDevice
