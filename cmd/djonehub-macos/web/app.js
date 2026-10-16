@@ -985,13 +985,13 @@ document.querySelectorAll(".tab").forEach((tab) => {
 
 $("#esim-download-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const button = event.currentTarget.querySelector("button[type=submit]");
   const confirmed = await showModal({
     title: "下载新的 Profile",
     message: "将向 SM-DP+ 服务器下载并写入新的 eSIM Profile。写入期间请勿拔出模块。",
     confirmLabel: "开始下载",
   });
   if (!confirmed) return;
-  const button = event.currentTarget.querySelector("button[type=submit]");
   const status = $("#esim-download-status");
   button.disabled = true;
   status.textContent = "正在下载并写入 Profile，请勿拔出模块...";
@@ -1000,8 +1000,8 @@ $("#esim-download-form").addEventListener("submit", async (event) => {
       smdp: $("#esim-smdp").value, matching_id: $("#esim-matching-id").value,
       confirmation_code: $("#esim-confirmation-code").value, imei: $("#esim-imei").value, aid: $("#esim-aid").value,
     }) });
-    status.textContent = result.message || "Profile 下载完成，正在重新读取卡片";
-    notice("Profile 下载完成");
+    status.textContent = result.Warning || result.message || "Profile 下载完成，正在重新读取卡片";
+    notice(result.Warning || "Profile 下载完成");
     await loadESIM();
   } catch (error) { status.textContent = `下载失败：${error.message}`; notice(error.message); } finally { button.disabled = false; }
 });
